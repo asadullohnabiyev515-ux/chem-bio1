@@ -27,6 +27,7 @@ async def _get_bot_app():
         _bot_application.add_handler(MessageHandler(filters.Document.ALL, _bot.fayl_handler))
         _bot_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _bot.matn_handler))
         await _bot_application.initialize()
+        await _bot_application.start()
     return _bot_application
 
 @asynccontextmanager
