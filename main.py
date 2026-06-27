@@ -13,32 +13,32 @@ import requests as _req
 BOT_TOKEN    = os.environ.get("TG_BOT_TOKEN", "8704747686:AAEL3E6QMKXvsznhxO5CKqumbSYHR3G4erM")
 BACKEND_URL  = os.environ.get("BACKEND_URL", "https://chem-bio1.onrender.com")
 
-from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
-from telegram import Update
+from telegram import Update, Bot
 import bot as _bot_module
 
-_bot_application = (ApplicationBuilder().token(BOT_TOKEN).build())
-_bot_application.add_handler(CommandHandler("start", _bot_module.start))
-_bot_application.add_handler(CallbackQueryHandler(_bot_module.tugma))
-_bot_application.add_handler(MessageHandler(filters.PHOTO, _bot_module.rasm_handler))
-_bot_application.add_handler(MessageHandler(filters.Document.ALL, _bot_module.fayl_handler))
-_bot_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _bot_module.matn_handler))
+_tg_bot: Bot = None
+_user_data: Dict[int, dict] = {}
+
+class _Ctx:
+    def __init__(self, bot: Bot, user_id: int):
+        self.bot = bot
+        self.user_data = _user_data.setdefault(user_id, {})
 
 @asynccontextmanager
 async def lifespan(application):
+    global _tg_bot
     _cache_load_all()
-    async with _bot_application:
-        await _bot_application.start()
-        try:
-            await _bot_application.bot.set_webhook(url=f"{BACKEND_URL}/webhook")
-        except Exception:
-            pass
-        tw = threading.Thread(target=_gh_writer_loop, daemon=True)
-        tw.start()
-        tk = threading.Thread(target=_keep_alive_loop, daemon=True)
-        tk.start()
-        yield
-        await _bot_application.stop()
+    _tg_bot = Bot(token=BOT_TOKEN)
+    try:
+        await _tg_bot.set_webhook(url=f"{BACKEND_URL}/webhook", drop_pending_updates=True)
+    except Exception:
+        pass
+    tw = threading.Thread(target=_gh_writer_loop, daemon=True)
+    tw.start()
+    tk = threading.Thread(target=_keep_alive_loop, daemon=True)
+    tk.start()
+    yield
+    await _tg_bot.close()
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -177,8 +177,19 @@ def root(): return {"status": "ok"}
 async def webhook(request: Request):
     try:
         data = await request.json()
-        update = Update.de_json(data, _bot_application.bot)
-        await _bot_application.process_update(update)
+        update = Update.de_json(data, _tg_bot)
+        uid = update.effective_user.id if update.effective_user else 0
+        ctx = _Ctx(_tg_bot, uid)
+        if update.message and update.message.text and update.message.text.startswith("/start"):
+            await _bot_module.start(update, ctx)
+        elif update.callback_query:
+            await _bot_module.tugma(update, ctx)
+        elif update.message and update.message.photo:
+            await _bot_module.rasm_handler(update, ctx)
+        elif update.message and update.message.document:
+            await _bot_module.fayl_handler(update, ctx)
+        elif update.message and update.message.text:
+            await _bot_module.matn_handler(update, ctx)
     except Exception as e:
         import logging; logging.getLogger(__name__).error(f"Webhook xato: {e}")
         return {"ok": False, "error": str(e)}
@@ -187,8 +198,8 @@ async def webhook(request: Request):
 @app.get("/debug/bot")
 async def debug_bot():
     try:
-        me = await _bot_application.bot.get_me()
-        wh = await _bot_application.bot.get_webhook_info()
+        me = await _tg_bot.get_me()
+        wh = await _tg_bot.get_webhook_info()
         return {"ok": True, "bot": me.username, "webhook_url": wh.url, "pending": wh.pending_update_count}
     except Exception as e:
         return {"ok": False, "error": str(e)}
