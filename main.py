@@ -15,34 +15,33 @@ BACKEND_URL  = os.environ.get("BACKEND_URL", "https://chem-bio1.onrender.com")
 
 _bot_application = None
 
-async def _init_bot():
+async def _get_bot_app():
     global _bot_application
-    from telegram import Update
-    from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
-    import bot as _bot
-    _bot_application = ApplicationBuilder().token(BOT_TOKEN).build()
-    _bot_application.add_handler(CommandHandler("start", _bot.start))
-    _bot_application.add_handler(CallbackQueryHandler(_bot.tugma))
-    _bot_application.add_handler(MessageHandler(filters.PHOTO, _bot.rasm_handler))
-    _bot_application.add_handler(MessageHandler(filters.Document.ALL, _bot.fayl_handler))
-    _bot_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _bot.matn_handler))
-    await _bot_application.initialize()
-    await _bot_application.start()
-    await _bot_application.bot.set_webhook(url=f"{BACKEND_URL}/webhook")
+    if _bot_application is None:
+        from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, filters
+        import bot as _bot
+        _bot_application = ApplicationBuilder().token(BOT_TOKEN).build()
+        _bot_application.add_handler(CommandHandler("start", _bot.start))
+        _bot_application.add_handler(CallbackQueryHandler(_bot.tugma))
+        _bot_application.add_handler(MessageHandler(filters.PHOTO, _bot.rasm_handler))
+        _bot_application.add_handler(MessageHandler(filters.Document.ALL, _bot.fayl_handler))
+        _bot_application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, _bot.matn_handler))
+        await _bot_application.initialize()
+    return _bot_application
 
 @asynccontextmanager
 async def lifespan(application):
     _cache_load_all()
-    await _init_bot()
+    try:
+        _req.post(f"https://api.telegram.org/bot{BOT_TOKEN}/setWebhook",
+                  json={"url": f"{BACKEND_URL}/webhook"}, timeout=10)
+    except Exception:
+        pass
     tw = threading.Thread(target=_gh_writer_loop, daemon=True)
     tw.start()
     tk = threading.Thread(target=_keep_alive_loop, daemon=True)
     tk.start()
     yield
-    if _bot_application:
-        await _bot_application.bot.delete_webhook()
-        await _bot_application.stop()
-        await _bot_application.shutdown()
 
 app = FastAPI(lifespan=lifespan)
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -180,9 +179,13 @@ def root(): return {"status": "ok"}
 @app.post("/webhook")
 async def webhook(request: Request):
     from telegram import Update
-    data = await request.json()
-    update = Update.de_json(data, _bot_application.bot)
-    await _bot_application.process_update(update)
+    try:
+        bot_app = await _get_bot_app()
+        data = await request.json()
+        update = Update.de_json(data, bot_app.bot)
+        await bot_app.process_update(update)
+    except Exception as e:
+        import logging; logging.getLogger(__name__).error(f"Webhook xato: {e}")
     return {"ok": True}
 
 # ── Testlar ───────────────────────────────────────────────────────────────────
