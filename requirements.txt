@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+openpyxl
+httpx
+requests
+reportlab
+python-telegram-bot==21.3
+numpy
+opencv-python-headless
+pdfplumber
+pymupdf
+python-docx
+python-multipart
+groq
