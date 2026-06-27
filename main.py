@@ -186,7 +186,18 @@ async def webhook(request: Request):
         await bot_app.process_update(update)
     except Exception as e:
         import logging; logging.getLogger(__name__).error(f"Webhook xato: {e}")
+        return {"ok": False, "error": str(e)}
     return {"ok": True}
+
+@app.get("/debug/bot")
+async def debug_bot():
+    try:
+        bot_app = await _get_bot_app()
+        me = await bot_app.bot.get_me()
+        wh = await bot_app.bot.get_webhook_info()
+        return {"ok": True, "bot": me.username, "webhook_url": wh.url, "pending": wh.pending_update_count}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
 # ── Testlar ───────────────────────────────────────────────────────────────────
 @app.post("/test/yarat")
