@@ -184,6 +184,8 @@ async def webhook(request: Request):
             await _bot_module.start(update, ctx)
         elif update.callback_query:
             await _bot_module.tugma(update, ctx)
+        elif update.message and update.message.contact:
+            await _bot_module.contact_handler(update, ctx)
         elif update.message and update.message.photo:
             await _bot_module.rasm_handler(update, ctx)
         elif update.message and update.message.document:
@@ -948,15 +950,81 @@ def _elon_bildirishnoma(elon: dict):
         except Exception:
             pass
 
+def _royxat_bildirishnoma_yuborish():
+    import time
+    users = load_json("users.json")
+    if not isinstance(users, dict): return 0
+    yuborildi = 0
+    for uid_str, info in users.items():
+        if not info.get("telefon"):
+            matn = (
+                "🔔 <b>EduTest yangilandi!</b>\n"
+                "━━━━━━━━━━━━━━━━━━\n"
+                "Botda yangi ro'yxatdan o'tish tizimi joriy etildi.\n\n"
+                "Davom etish uchun /start bosing va\n"
+                "ism, familiya, telefon raqamingizni kiriting.\n\n"
+                "Bu bir martalik amal — keyin hamma narsa avvalgidek ishlaydi. ✅"
+            )
+            try:
+                _tg_xabar_yuborish(int(uid_str), matn)
+                yuborildi += 1
+                time.sleep(0.05)
+            except Exception:
+                pass
+    return yuborildi
+
+@app.post("/admin/bildirishnoma_royxat")
+def admin_bildirishnoma_royxat(data: dict):
+    ustoz_id = data.get("ustoz_id", 0)
+    ADMIN_IDS = [5145005581]
+    if ustoz_id not in ADMIN_IDS:
+        raise HTTPException(403, "Ruxsat yo'q")
+    threading.Thread(target=_royxat_bildirishnoma_yuborish, daemon=True).start()
+    users = load_json("users.json")
+    eski_soni = sum(1 for info in (users or {}).values() if not info.get("telefon"))
+    return {"success": True, "yuboriladi": eski_soni}
+
 @app.post("/user/royxat")
 def user_royxat(data: dict):
     users = load_json("users.json")
     if not isinstance(users, dict): users = {}
     uid = str(data.get("user_id", ""))
     if not uid: return {"success": False}
-    users[uid] = {"ism": data.get("ism", ""), "vaqt": ts()}
+    users[uid] = {
+        "ism": data.get("ism", ""),
+        "familiya": data.get("familiya", ""),
+        "telefon": data.get("telefon", ""),
+        "vaqt": ts()
+    }
     save_json("users.json", users)
     return {"success": True}
+
+@app.get("/users/royxat")
+def users_royxat():
+    users = load_json("users.json")
+    if not isinstance(users, dict): return {"users": []}
+    natija = []
+    for uid, info in users.items():
+        if info.get("ism") and info.get("telefon"):
+            natija.append({
+                "user_id": int(uid),
+                "ism": info.get("ism", ""),
+                "familiya": info.get("familiya", ""),
+                "telefon": info.get("telefon", ""),
+                "vaqt": info.get("vaqt", "")
+            })
+    natija.sort(key=lambda x: x["vaqt"], reverse=True)
+    return {"users": natija, "jami": len(natija)}
+
+@app.get("/user/tekshir/{user_id}")
+def user_tekshir(user_id: int):
+    users = load_json("users.json")
+    if not isinstance(users, dict): return {"royxatdan_otgan": False}
+    info = users.get(str(user_id))
+    if not info or not info.get("ism") or not info.get("telefon"):
+        return {"royxatdan_otgan": False}
+    return {"royxatdan_otgan": True, "ism": info["ism"],
+            "familiya": info.get("familiya", ""), "telefon": info["telefon"]}
 
 @app.post("/elon/qosh")
 def elon_qosh(data: dict):

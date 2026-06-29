@@ -1,6 +1,6 @@
 import logging, httpx, threading, os
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo, ReplyKeyboardMarkup, KeyboardButton, ReplyKeyboardRemove
 from telegram.ext import ApplicationBuilder, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
 
 BOT_TOKEN    = os.environ.get("TG_BOT_TOKEN", "8704747686:AAEL3E6QMKXvsznhxO5CKqumbSYHR3G4erM")
@@ -28,6 +28,27 @@ async def obuna_tekshir(bot, user_id):
         return member.status in ["member","administrator","creator"]
     except Exception:
         return False
+
+async def royxat_tekshir(user_id):
+    try:
+        res = await api_get(f"/user/tekshir/{user_id}")
+        return res.get("royxatdan_otgan", False)
+    except Exception:
+        return False
+
+async def royxat_boshlash(update_or_bot, chat_id, ctx_user_data):
+    ctx_user_data["kutish"] = "royxat_ism"
+    matn = (
+        "📝 Ro'yxatdan o'tish\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Platformadan foydalanish uchun\n"
+        "bir marta ro'yxatdan o'ting.\n\n"
+        "👤 Ismingizni yozing:"
+    )
+    if hasattr(update_or_bot, "message") and update_or_bot.message:
+        await update_or_bot.message.reply_text(matn, reply_markup=ReplyKeyboardRemove())
+    else:
+        await update_or_bot.send_message(chat_id=chat_id, text=matn, reply_markup=ReplyKeyboardRemove())
 
 def varaq_skaner(rasm_bytes, n_savol=35):
     import numpy as np
@@ -90,7 +111,13 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 f"📣 {KANAL}",
                 reply_markup=kb)
             return
-    is_admin=uid in ADMIN_IDS
+        royxatdan_otgan=await royxat_tekshir(uid)
+        if not royxatdan_otgan:
+            await royxat_boshlash(update, uid, ctx.user_data)
+            return
+    await bosh_menyu_korsatish(ctx.bot, uid, user.first_name, uid in ADMIN_IDS)
+
+async def bosh_menyu_korsatish(bot, uid, ism, is_admin):
     tugmalar=[
         [InlineKeyboardButton("🌐 Platformaga kirish",web_app=WebAppInfo(url=MINI_APP_URL))],
         [InlineKeyboardButton("📚 Kitoblar",callback_data="kitoblar"),
@@ -98,13 +125,17 @@ async def start(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     ]
     if is_admin:
         tugmalar.append([InlineKeyboardButton("👨‍🏫 Ustoz paneli",callback_data="ustoz")])
-    await update.message.reply_text(
-        f"Assalomu alaykum, {user.first_name}!\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"🎓 EduTest — Ta'lim Platformasi\n"
-        f"━━━━━━━━━━━━━━━━━━\n"
-        f"Bo'limni tanlang:",
-        reply_markup=InlineKeyboardMarkup(tugmalar))
+    await bot.send_message(
+        chat_id=uid,
+        text=(
+            f"Assalomu alaykum, {ism}!\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"🎓 EduTest — Ta'lim Platformasi\n"
+            f"━━━━━━━━━━━━━━━━━━\n"
+            f"Bo'limni tanlang:"
+        ),
+        reply_markup=InlineKeyboardMarkup(tugmalar)
+    )
 
 async def tugma(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     q=update.callback_query; data=q.data; uid=q.from_user.id
@@ -564,6 +595,39 @@ async def fayl_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
 async def matn_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
     holat=ctx.user_data.get("kutish"); uid=update.effective_user.id; text=update.message.text.strip()
 
+    if holat=="royxat_ism":
+        if len(text)<2:
+            await update.message.reply_text("Ism kamida 2 ta harf bo'lishi kerak!"); return
+        ctx.user_data["royxat_ism"]=text
+        ctx.user_data["kutish"]="royxat_familiya"
+        await update.message.reply_text(
+            f"✅ Ism: {text}\n\n"
+            f"👤 Familiyangizni yozing:")
+        return
+
+    if holat=="royxat_familiya":
+        if len(text)<2:
+            await update.message.reply_text("Familiya kamida 2 ta harf bo'lishi kerak!"); return
+        ctx.user_data["royxat_familiya"]=text
+        ctx.user_data["kutish"]="royxat_telefon"
+        kb=ReplyKeyboardMarkup(
+            [[KeyboardButton("📱 Telefon raqamni ulashish", request_contact=True)]],
+            resize_keyboard=True, one_time_keyboard=True
+        )
+        await update.message.reply_text(
+            f"✅ Familiya: {text}\n\n"
+            f"📱 Telefon raqamingizni yuboring\n"
+            f"yoki qo'lda kiriting (+998XXXXXXXXX):",
+            reply_markup=kb)
+        return
+
+    if holat=="royxat_telefon":
+        telefon=text.replace(" ","").replace("-","")
+        if not (telefon.startswith("+") or telefon.startswith("998") or telefon.startswith("0")):
+            await update.message.reply_text("To'g'ri telefon raqam kiriting!\nMasalan: +998901234567"); return
+        await _royxat_saqlash(update, ctx, uid, telefon)
+        return
+
     if holat=="elon_sarlavha" and uid in ADMIN_IDS:
         ctx.user_data["elon_sarlavha"]=text
         ctx.user_data["kutish"]="elon_matn"
@@ -830,6 +894,37 @@ async def matn_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("Xato: "+str(e))
             ctx.user_data.pop("kutish",None)
 
+async def _royxat_saqlash(update, ctx, uid, telefon):
+    ism=ctx.user_data.get("royxat_ism","")
+    familiya=ctx.user_data.get("royxat_familiya","")
+    try:
+        res=await api_post("/user/royxat",{
+            "user_id":uid,"ism":ism,"familiya":familiya,"telefon":telefon
+        })
+        if res.get("success"):
+            for k in ["royxat_ism","royxat_familiya","kutish"]:
+                ctx.user_data.pop(k,None)
+            await update.message.reply_text(
+                f"✅ Ro'yxatdan o'tdingiz!\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"👤 {ism} {familiya}\n"
+                f"📱 {telefon}",
+                reply_markup=ReplyKeyboardRemove()
+            )
+            await bosh_menyu_korsatish(ctx.bot, uid, ism, uid in ADMIN_IDS)
+        else:
+            await update.message.reply_text("Xato yuz berdi, qaytadan urinib ko'ring!")
+    except Exception as e:
+        await update.message.reply_text(f"Xato: {str(e)}")
+
+async def contact_handler(update: Update, ctx: ContextTypes.DEFAULT_TYPE):
+    uid=update.effective_user.id
+    if ctx.user_data.get("kutish")!="royxat_telefon": return
+    contact=update.message.contact
+    telefon=contact.phone_number
+    if not telefon.startswith("+"): telefon="+"+telefon
+    await _royxat_saqlash(update, ctx, uid, telefon)
+
 async def savol_sora(update,ctx):
     n=ctx.user_data.get("savol",1)
     if n<=32: v="A/B/C/D"
@@ -875,6 +970,7 @@ def main():
     app=ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(CommandHandler("start",start))
     app.add_handler(CallbackQueryHandler(tugma))
+    app.add_handler(MessageHandler(filters.CONTACT,contact_handler))
     app.add_handler(MessageHandler(filters.PHOTO,rasm_handler))
     app.add_handler(MessageHandler(filters.Document.ALL,fayl_handler))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND,matn_handler))
